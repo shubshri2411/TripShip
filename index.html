@@ -23,7 +23,6 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, createContext, useContext } = React;
 
-
 /* ── Supabase Client ── */
 const SURL = "https://kfjqttdsdahllgzfmbyj.supabase.co";
 const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtmanF0dGRzZGFobGxnemZtYnlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE3NzUsImV4cCI6MjA5NTIyNzc3NX0.0P-diNmiKRFRDglIuHrMOpHszuDmWlA6kp30K8jYQVY";
@@ -1620,21 +1619,23 @@ function App(){
   const go=t=>{ setAt(t); setScr("dash"); };
   const splashDone=async()=>{
     handleAuthCallback();
-    const sbU=await sbGetSession().catch(()=>null);
-    if(sbU && sbU.id){
-      setSbUser(sbU);
-      const localUser=loadUser();
-      if(localUser?.name){
-        setUser(localUser);
-        const sbTrips=await loadTripsFromSB(sbU.id).catch(()=>[]);
-        setTrips(sbTrips.length?sbTrips:loadTrips());
-        setScr("home");
-      } else {
-        setScr("profile");
-      }
+    // Session check background mein — local data se turant load karo
+    const localUser=loadUser();
+    if(localUser?.name){
+      setUser(localUser);
+      setTrips(loadTrips());
+      setScr("home");
     } else {
-      const u=loadUser(); if(u?.name){setUser(u);setTrips(loadTrips());setScr("home");}else setScr("signin");
+      setScr("signin");
     }
+    // Background mein Supabase sync
+    sbGetSession().then(async sbU=>{
+      if(!sbU || !sbU.id) return;
+      setSbUser(sbU);
+      if(!localUser?.name){ setScr("profile"); return; }
+      const sbTrips=await loadTripsFromSB(sbU.id).catch(()=>[]);
+      if(sbTrips.length) setTrips(sbTrips);
+    }).catch(()=>{});
   };
   const signIn=()=>setScr("profile");
   const profile=async(d)=>{
@@ -1664,13 +1665,6 @@ function App(){
   const backHome=()=>{ setAt(null); setTrips(loadTrips()); setScr("home"); };
   const updUser=u=>{ setUser(u); saveUser(u); };
 
-  if(loading) return(
-    <div style={{position:"fixed",inset:0,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
-      <div style={{width:48,height:48,background:"#FFDD57",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Montserrat,sans-serif",fontSize:18,fontWeight:900,color:"#000"}}>TS</div>
-      <div style={{color:"rgba(255,255,255,0.4)",fontSize:13}}>Loading…</div>
-    </div>
-  );
-
   return(
     <ThemeCtx.Provider value={theme}>
       <div style={{background:theme.bg,minHeight:"100vh",transition:"background 0.3s"}}>
@@ -1685,7 +1679,6 @@ function App(){
     </ThemeCtx.Provider>
   );
 }
-
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App/>);
