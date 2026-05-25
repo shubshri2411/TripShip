@@ -635,19 +635,17 @@ function CreateTrip({user,onDone,onBack}){
     } else if(coverPhoto){
       trip.coverPhoto=coverPhoto;
     }
-    // Save to Supabase — WAIT karo puri tarah
+    // Save to Supabase — session ho ya na ho, save karo
     try{
-      const sbU=await sbGetSession();
-      if(sbU && sbU.id){
-        await sbInsert("trips",{id:tripId,trip_name:trip.tripName,destination:trip.destination,start_date:sd,end_date:ed,cover:cov,cover_photo_url:trip.coverPhoto,currency:curr,created_by:sbU.id});
-        // Add all members in parallel — faster!
-        await Promise.all(friends.map(fname=>{
-          const photoUrl=fname===user.name?(user.photo&&!user.photo.startsWith("data:")?user.photo:null):null;
-          return sbInsert("trip_members",{trip_id:tripId,user_id:sbU.id,display_name:fname,photo_url:photoUrl}).catch(()=>{});
-        }));
-      } else {
-        console.log("No Supabase session — saving locally only");
-      }
+      const sbU=await sbGetSession().catch(()=>null);
+      const userId=sbU?.id||null;
+      await sbInsert("trips",{id:tripId,trip_name:trip.tripName,destination:trip.destination,start_date:sd,end_date:ed,cover:cov,cover_photo_url:trip.coverPhoto,currency:curr,created_by:userId});
+      // Add all members in parallel
+      await Promise.all(friends.map(fname=>{
+        const photoUrl=fname===user.name?(user.photo&&!user.photo.startsWith("data:")?user.photo:null):null;
+        return sbInsert("trip_members",{trip_id:tripId,user_id:userId,display_name:fname,photo_url:photoUrl}).catch(()=>{});
+      }));
+      console.log("Trip saved to Supabase!");
     }catch(e){ console.error("Trip create SB error:",e); }
     const all=[...loadTrips(),trip]; saveTrips(all);
     setCreating(false);
