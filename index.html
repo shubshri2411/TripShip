@@ -618,13 +618,14 @@ function Home({user,trips,onCreate,onOpen,onUpdateUser,toggleTheme,dark}){
 function CreateTrip({user,onDone,onBack}){
   const T=useT();
   const [step,setStep]=useState(1);
-  const [tn,setTn]=useState(""); const [dest,setDest]=useState(""); const [sd,setSd]=useState(""); const [ed,setEd]=useState(""); const [cov,setCov]=useState(COVERS[0].id); const [coverPhoto,setCoverPhoto]=useState(null); const [coverLoaded,setCoverLoaded]=useState(false); const [curr,setCurr]=useState("INR");
+  const [tn,setTn]=useState(""); const [dest,setDest]=useState(""); const [sd,setSd]=useState(""); const [ed,setEd]=useState(""); const [cov,setCov]=useState(COVERS[0].id); const [coverPhoto,setCoverPhoto]=useState(null); const [coverLoaded,setCoverLoaded]=useState(false); const [curr,setCurr]=useState("INR"); const [creating,setCreating]=useState(false);
   const coverRef=useRef(null);
   const [friends,setFriends]=useState([user.name]); const [nf,setNf]=useState(""); const [fe,setFe]=useState("");
   const today=new Date().toISOString().split("T")[0];
   const inp={padding:"13px 14px",background:"rgba(255,255,255,0.07)",border:`1px solid ${T.border}`,borderRadius:12,color:T.text,fontSize:15,outline:"none",fontFamily:T.fontBody,width:"100%",boxSizing:"border-box"};
   const addF=()=>{ const n=nf.trim(); if(!n)return; if(friends.includes(n)){setFe("Already added");return;} if(friends.length>=10){setFe("Max 10");return;} setFriends(p=>[...p,n]); setNf(""); setFe(""); };
   const create=async()=>{
+    setCreating(true);
     const tripId=genId();
     const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,coverPhoto:null,currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:{[user.name]:user.photo||null},createdAt:Date.now()};
     // Upload cover photo if any
@@ -634,19 +635,23 @@ function CreateTrip({user,onDone,onBack}){
     } else if(coverPhoto){
       trip.coverPhoto=coverPhoto;
     }
-    // Save to Supabase
+    // Save to Supabase — WAIT karo puri tarah
     try{
       const sbU=await sbGetSession();
       if(sbU && sbU.id){
         await sbInsert("trips",{id:tripId,trip_name:trip.tripName,destination:trip.destination,start_date:sd,end_date:ed,cover:cov,cover_photo_url:trip.coverPhoto,currency:curr,created_by:sbU.id});
-        // Add all friends as members
-        for(const fname of friends){
+        // Add all members in parallel — faster!
+        await Promise.all(friends.map(fname=>{
           const photoUrl=fname===user.name?(user.photo&&!user.photo.startsWith("data:")?user.photo:null):null;
-          await sbInsert("trip_members",{trip_id:tripId,user_id:fname===user.name?sbU.id:sbU.id,display_name:fname,photo_url:photoUrl}).catch(()=>{});
-        }
+          return sbInsert("trip_members",{trip_id:tripId,user_id:sbU.id,display_name:fname,photo_url:photoUrl}).catch(()=>{});
+        }));
+      } else {
+        console.log("No Supabase session — saving locally only");
       }
     }catch(e){ console.error("Trip create SB error:",e); }
-    const all=[...loadTrips(),trip]; saveTrips(all); onDone(trip);
+    const all=[...loadTrips(),trip]; saveTrips(all);
+    setCreating(false);
+    onDone(trip);
   };
   const onCoverFile=e=>{ const f=e.target.files[0]; e.target.value=""; if(!f)return; if(f.size>5*1024*1024){return;} const rd=new FileReader(); rd.onload=ev=>{ setCoverPhoto(ev.target.result); setCoverLoaded(false); }; rd.readAsDataURL(f); };
   if(step===1) return(
@@ -727,7 +732,7 @@ function CreateTrip({user,onDone,onBack}){
       </div>
       {fe&&<div style={{fontSize:12,color:T.danger,marginBottom:4}}>{fe}</div>}
       <div style={{fontSize:12,color:T.textMuted,marginBottom:18}}>Friends can join later via trip ID.</div>
-      <YBtn onClick={create}>Create Trip 🎉</YBtn>
+      <YBtn onClick={create} disabled={creating}>{creating?"Creating…":"Create Trip 🎉"}</YBtn>
     </div></Scr>
   );
 }
