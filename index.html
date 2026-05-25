@@ -28,20 +28,29 @@ const SURL = "https://kfjqttdsdahllgzfmbyj.supabase.co";
 const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtmanF0dGRzZGFobGxnemZtYnlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE3NzUsImV4cCI6MjA5NTIyNzc3NX0.0P-diNmiKRFRDglIuHrMOpHszuDmWlA6kp30K8jYQVY";
 
 async function sbFetch(path, opts={}){
-  const res = await fetch(SURL+path, {
-    ...opts,
-    headers: {
-      "apikey": SKEY,
-      "Authorization": "Bearer "+(lsGet("sb_token")||SKEY),
-      "Content-Type": "application/json",
-      "Prefer": "return=representation",
-      ...(opts.headers||{})
+  const isGet = !opts.method || opts.method==="GET";
+  const headers = {
+    "apikey": SKEY,
+    "Authorization": "Bearer "+(lsGet("sb_token")||SKEY),
+    ...(opts.headers||{})
+  };
+  if(!isGet) headers["Content-Type"]="application/json";
+  if(!isGet) headers["Prefer"]="return=representation";
+  try{
+    const res = await fetch(SURL+path, {...opts, headers});
+    if(!res.ok){
+      const e=await res.text();
+      console.error("SB Error:",path, res.status, e);
+      return isGet ? [] : null;
     }
-  });
-  if(!res.ok){ const e=await res.text(); console.error("SB Error:",e); return null; }
-  const ct=res.headers.get("content-type")||"";
-  if(ct.includes("json")) return res.json();
-  return null;
+    if(res.status===204) return isGet ? [] : true;
+    const ct=res.headers.get("content-type")||"";
+    if(ct.includes("json")) return res.json();
+    return isGet ? [] : true;
+  }catch(e){
+    console.error("SB Fetch failed:",path, e);
+    return isGet ? [] : null;
+  }
 }
 
 // Auth helpers
