@@ -315,12 +315,7 @@ function SignIn({onDone}){
             const {auth,provider,signInWithPopup}=window.__fb;
             const result=await signInWithPopup(auth,provider);
             const u=result.user;
-            onDone({
-              name:u.displayName||u.email.split("@")[0],
-              photo:u.photoURL||null,
-              email:u.email||"",
-              uid:u.uid
-            });
+            onDone({uid:u.uid, email:u.email||""});
           }catch(e){
             console.error("Google signin error:",e);
             if(e.code!=="auth/popup-closed-by-user") alert("Sign in failed. Try again.");
@@ -1563,13 +1558,8 @@ function App(){
   };
 
   const signIn=(googleData)=>{
-    if(googleData?.name){
-      // Google ne naam aur photo de diya — profile setup skip
-      const u={name:googleData.name,photo:googleData.photo||null,email:googleData.email||"",gender:"",city:""};
-      setUser(u); saveUser(u); setTrips(loadTrips()); setScr("home");
-    } else {
-      setScr("profile");
-    }
+    // Hamesha profile setup pe jaao — user apna naam khud daale
+    setScr("profile");
   };
 
   const profile=async(d)=>{
