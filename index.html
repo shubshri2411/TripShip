@@ -61,7 +61,8 @@ function fbClean(obj){
 async function fbSaveTrip(trip){
   await waitForFB();
   const {db,doc,setDoc} = window.__fb;
-  await setDoc(doc(db,"trips",trip.id), fbClean({...trip, updatedAt:Date.now()}));
+  const {memberPhotos, ...tripData} = trip;
+  await setDoc(doc(db,"trips",trip.id), {...tripData, updatedAt:Date.now()});
 }
 async function fbGetTrip(tripId){
   await waitForFB();
@@ -72,9 +73,10 @@ async function fbGetTrip(tripId){
 async function fbUpdateTrip(tripId, data){
   await waitForFB();
   const {db,doc,updateDoc,setDoc} = window.__fb;
-  const clean = fbClean({...data, updatedAt:Date.now()});
-  try{ await updateDoc(doc(db,"trips",tripId), clean); }
-  catch(e){ await setDoc(doc(db,"trips",tripId), clean); }
+  const {memberPhotos, ...tripData} = data;
+  const payload = {...tripData, updatedAt:Date.now()};
+  try{ await updateDoc(doc(db,"trips",tripId), payload); }
+  catch(e){ await setDoc(doc(db,"trips",tripId), payload); }
 }
 async function fbSubscribeTrip(tripId, onChange){
   await waitForFB();
