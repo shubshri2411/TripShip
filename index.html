@@ -549,7 +549,7 @@ function CreateTrip({user,onDone,onBack}){
   const create=async()=>{
     setCreating(true);
     const tripId=genId();
-    const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,coverPhoto:coverPhoto||null,currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:user.photo?{[user.name]:user.photo}:{},activity:[],trash:[],createdAt:Date.now()};
+    const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,...(coverPhoto?{coverPhoto}:{}),currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:user.photo?{[user.name]:user.photo}:{},activity:[],trash:[],createdAt:Date.now()};
     // Save locally first
     const all=[...loadTrips(),trip]; saveTrips(all);
     // Save to Firebase
