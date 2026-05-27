@@ -61,8 +61,15 @@ function fbClean(obj){
 async function fbSaveTrip(trip){
   await waitForFB();
   const {db,doc,setDoc} = window.__fb;
-  const {memberPhotos, ...tripData} = trip;
-  await setDoc(doc(db,"trips",trip.id), {...tripData, updatedAt:Date.now()});
+  // Sirf safe fields bhejo - koi null/undefined nahi
+  const safe = JSON.parse(JSON.stringify(trip, (k,v) => v === null || v === undefined ? undefined : v));
+  const {memberPhotos, coverPhoto, ...rest} = safe;
+  const payload = {
+    ...rest,
+    ...(coverPhoto ? {coverPhoto} : {}),
+    updatedAt: Date.now()
+  };
+  await setDoc(doc(db,"trips",trip.id), payload);
 }
 async function fbGetTrip(tripId){
   await waitForFB();
@@ -73,8 +80,13 @@ async function fbGetTrip(tripId){
 async function fbUpdateTrip(tripId, data){
   await waitForFB();
   const {db,doc,updateDoc,setDoc} = window.__fb;
-  const {memberPhotos, ...tripData} = data;
-  const payload = {...tripData, updatedAt:Date.now()};
+  const safe = JSON.parse(JSON.stringify(data, (k,v) => v === null || v === undefined ? undefined : v));
+  const {memberPhotos, coverPhoto, ...rest} = safe;
+  const payload = {
+    ...rest,
+    ...(coverPhoto ? {coverPhoto} : {}),
+    updatedAt: Date.now()
+  };
   try{ await updateDoc(doc(db,"trips",tripId), payload); }
   catch(e){ await setDoc(doc(db,"trips",tripId), payload); }
 }
