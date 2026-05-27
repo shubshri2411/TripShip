@@ -48,10 +48,23 @@ const waitForFB = () => new Promise(res => {
   document.addEventListener("firebase-ready", ()=>res(), {once:true});
 });
 
+// Firebase null cleaner — null values Firebase mein invalid hain
+function fbClean(obj){
+  if(Array.isArray(obj)) return obj.map(fbClean);
+  if(obj && typeof obj==="object"){
+    const out={};
+    for(const [k,v] of Object.entries(obj)){
+      if(v===null||v===undefined) continue;
+      out[k]=fbClean(v);
+    }
+    return out;
+  }
+  return obj;
+}
 async function fbSaveTrip(trip){
   await waitForFB();
   const {db,doc,setDoc} = window.__fb;
-  await setDoc(doc(db,"trips",trip.id), {...trip, updatedAt:Date.now()});
+  await setDoc(doc(db,"trips",trip.id), fbClean({...trip, updatedAt:Date.now()}));
 }
 async function fbGetTrip(tripId){
   await waitForFB();
@@ -62,8 +75,9 @@ async function fbGetTrip(tripId){
 async function fbUpdateTrip(tripId, data){
   await waitForFB();
   const {db,doc,updateDoc,setDoc} = window.__fb;
-  try{ await updateDoc(doc(db,"trips",tripId), {...data, updatedAt:Date.now()}); }
-  catch(e){ await setDoc(doc(db,"trips",tripId), {...data, updatedAt:Date.now()}); }
+  const clean = fbClean({...data, updatedAt:Date.now()});
+  try{ await updateDoc(doc(db,"trips",tripId), clean); }
+  catch(e){ await setDoc(doc(db,"trips",tripId), clean); }
 }
 async function fbSubscribeTrip(tripId, onChange){
   await waitForFB();
@@ -73,7 +87,7 @@ async function fbSubscribeTrip(tripId, onChange){
 
 /* ── Trip Link helpers ── */
 const getTripIdFromUrl = () => new URLSearchParams(window.location.search).get("tripId");
-const makeTripLink = id => window.location.origin + window.location.pathname + "?tripId=" + id;
+const makeTripLink = id => { const base = window.location.origin + window.location.pathname.replace(/\/$/,''); return base + "?tripId=" + id; };
 
 function getT(dark){
   return dark ? {
@@ -418,7 +432,7 @@ function Home({user,trips,onCreate,onOpen,onUpdateUser,toggleTheme,dark}){
       if(!tripData){setJErr("No trip found."); setJJoining(false); return;}
       if(!tripData.friends.includes(user.name)){
         tripData.friends=[...tripData.friends,user.name];
-        tripData.memberPhotos={...tripData.memberPhotos,[user.name]:user.photo||null};
+        tripData.memberPhotos={...tripData.memberPhotos,...(user.photo?{[user.name]:user.photo}:{})};
         tripData.activity=[{id:Date.now(),msg:`${user.name} joined the trip! 🎉`,type:"join",by:user.name,at:Date.now()},...(tripData.activity||[])].slice(0,50);
         await fbUpdateTrip(id,tripData);
       }
@@ -535,7 +549,7 @@ function CreateTrip({user,onDone,onBack}){
   const create=async()=>{
     setCreating(true);
     const tripId=genId();
-    const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,coverPhoto:coverPhoto||null,currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:{[user.name]:user.photo||null},activity:[],trash:[],createdAt:Date.now()};
+    const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,coverPhoto:coverPhoto||null,currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:user.photo?{[user.name]:user.photo}:{},activity:[],trash:[],createdAt:Date.now()};
     // Save locally first
     const all=[...loadTrips(),trip]; saveTrips(all);
     // Save to Firebase
@@ -1502,7 +1516,7 @@ function App(){
       const u=currentUser;
       if(u && !tripData.friends.includes(u.name)){
         tripData.friends=[...tripData.friends, u.name];
-        tripData.memberPhotos={...tripData.memberPhotos, [u.name]:u.photo||null};
+        tripData.memberPhotos={...tripData.memberPhotos,...(u.photo?{[u.name]:u.photo}:{})};
         tripData.activity=[{id:Date.now(),msg:`${u.name} joined the trip! 🎉`,type:"join",by:u.name,at:Date.now()},...(tripData.activity||[])].slice(0,50);
         await fbUpdateTrip(tripId, tripData);
       }
