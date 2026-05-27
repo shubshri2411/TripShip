@@ -20,122 +20,60 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    const app = initializeApp({
+      apiKey: "AIzaSyB_qeJuDxhh_ROYMBiG3dlQeNu-xqwKFCQ",
+      authDomain: "tripship-5e0fa.firebaseapp.com",
+      projectId: "tripship-5e0fa",
+      storageBucket: "tripship-5e0fa.firebasestorage.app",
+      messagingSenderId: "160115103035",
+      appId: "1:160115103035:web:533a0c34348e8e3afe931e"
+    });
+    const db = getFirestore(app);
+    window.__fb = { db, doc, setDoc, getDoc, updateDoc, onSnapshot };
+    window.__fbReady = true;
+    document.dispatchEvent(new Event("firebase-ready"));
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect, useRef, createContext, useContext } = React;
 
-/* ── Supabase Client ── */
-const SURL = "https://kfjqttdsdahllgzfmbyj.supabase.co";
-const SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtmanF0dGRzZGFobGxnemZtYnlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NTE3NzUsImV4cCI6MjA5NTIyNzc3NX0.0P-diNmiKRFRDglIuHrMOpHszuDmWlA6kp30K8jYQVY";
+/* ── Firebase Helpers ── */
+const waitForFB = () => new Promise(res => {
+  if(window.__fbReady) return res();
+  document.addEventListener("firebase-ready", ()=>res(), {once:true});
+});
 
-async function sbFetch(path, opts={}){
-  const isGet = !opts.method || opts.method==="GET";
-  const headers = {
-    "apikey": SKEY,
-    "Authorization": "Bearer "+(lsGet("sb_token")||SKEY),
-    ...(opts.headers||{})
-  };
-  if(!isGet) headers["Content-Type"]="application/json";
-  if(!isGet) headers["Prefer"]="return=representation";
-  try{
-    const res = await fetch(SURL+path, {...opts, headers});
-    if(!res.ok){
-      const e=await res.text();
-      console.error("SB Error:",path, res.status, e);
-      return isGet ? [] : null;
-    }
-    if(res.status===204) return isGet ? [] : true;
-    const ct=res.headers.get("content-type")||"";
-    if(ct.includes("json")) return res.json();
-    return isGet ? [] : true;
-  }catch(e){
-    console.error("SB Fetch failed:",path, e);
-    return isGet ? [] : null;
-  }
+async function fbSaveTrip(trip){
+  await waitForFB();
+  const {db,doc,setDoc} = window.__fb;
+  await setDoc(doc(db,"trips",trip.id), {...trip, updatedAt:Date.now()});
 }
-
-// Auth helpers
-async function sbSignInGoogle(){
-  window.location.href = SURL+"/auth/v1/authorize?provider=google&redirect_to="+encodeURIComponent(window.location.href);
+async function fbGetTrip(tripId){
+  await waitForFB();
+  const {db,doc,getDoc} = window.__fb;
+  const snap = await getDoc(doc(db,"trips",tripId));
+  return snap.exists() ? snap.data() : null;
 }
-async function sbGetSession(){
-  const token = lsGet("sb_token");
-  if(!token) return null;
-  const data = await sbFetch("/auth/v1/user");
-  return data;
+async function fbUpdateTrip(tripId, data){
+  await waitForFB();
+  const {db,doc,updateDoc,setDoc} = window.__fb;
+  try{ await updateDoc(doc(db,"trips",tripId), {...data, updatedAt:Date.now()}); }
+  catch(e){ await setDoc(doc(db,"trips",tripId), {...data, updatedAt:Date.now()}); }
 }
-async function sbSignOut(){
-  await sbFetch("/auth/v1/logout", {method:"POST"});
-  lsSet("sb_token","");
-  lsSet("sb_user","");
+async function fbSubscribeTrip(tripId, onChange){
+  await waitForFB();
+  const {db,doc,onSnapshot} = window.__fb;
+  return onSnapshot(doc(db,"trips",tripId), snap=>{ if(snap.exists()) onChange(snap.data()); });
 }
 
-// Handle OAuth callback
-function handleAuthCallback(){
-  const hash = window.location.hash;
-  if(hash && hash.includes("access_token")){
-    const params = new URLSearchParams(hash.substring(1));
-    const token = params.get("access_token");
-    if(token){
-      lsSet("sb_token", token);
-      window.location.hash = "";
-    }
-  }
-}
-
-// DB helpers
-async function sbSelect(table, query=""){
-  return await sbFetch("/rest/v1/"+table+"?"+query, {method:"GET"}) || [];
-}
-async function sbInsert(table, data){
-  return await sbFetch("/rest/v1/"+table, {method:"POST", body:JSON.stringify(data)});
-}
-async function sbUpdate(table, data, match){
-  return await sbFetch("/rest/v1/"+table+"?"+match, {method:"PATCH", body:JSON.stringify(data)});
-}
-async function sbDelete(table, match){
-  return await sbFetch("/rest/v1/"+table+"?"+match, {method:"DELETE"});
-}
-async function sbUpsert(table, data){
-  return await sbFetch("/rest/v1/"+table, {
-    method:"POST",
-    headers:{"Prefer":"resolution=merge-duplicates,return=representation"},
-    body:JSON.stringify(data)
-  });
-}
-
-// File upload
-async function sbUpload(bucket, path, base64data){
-  const base64 = base64data.split(",")[1] || base64data;
-  const mime = (base64data.match(/data:([^;]+);/)||[])[1] || "image/jpeg";
-  const bytes = atob(base64);
-  const arr = new Uint8Array(bytes.length);
-  for(let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
-  const blob = new Blob([arr], {type:mime});
-  const res = await fetch(SURL+"/storage/v1/object/"+bucket+"/"+path, {
-    method:"POST",
-    headers:{"apikey":SKEY,"Authorization":"Bearer "+(lsGet("sb_token")||SKEY),"Content-Type":mime,"x-upsert":"true"},
-    body:blob
-  });
-  if(!res.ok) return null;
-  return SURL+"/storage/v1/object/public/"+bucket+"/"+path;
-}
-
-// Realtime
-function sbRealtime(table, tripId, onChange){
-  const wsUrl = SURL.replace("https://","wss://").replace("http://","ws://")+"/realtime/v1/websocket?apikey="+SKEY+"&vsn=1.0.0";
-  const ws = new WebSocket(wsUrl);
-  const channel = "realtime:public:"+table+":trip_id=eq."+tripId;
-  ws.onopen = ()=>{
-    ws.send(JSON.stringify({topic:channel, event:"phx_join", payload:{}, ref:"1"}));
-  };
-  ws.onmessage = (e)=>{
-    const msg = JSON.parse(e.data);
-    if(msg.event==="INSERT"||msg.event==="UPDATE"||msg.event==="DELETE") onChange(msg);
-  };
-  ws.onerror = (e)=>console.log("WS error:",e);
-  return ws;
-}
-
+/* ── Trip Link helpers ── */
+const getTripIdFromUrl = () => new URLSearchParams(window.location.search).get("tripId");
+const makeTripLink = id => window.location.origin + window.location.pathname + "?tripId=" + id;
 
 function getT(dark){
   return dark ? {
@@ -354,7 +292,7 @@ function SignIn({onDone}){
       <div style={{fontFamily:T.fontHead,fontSize:28,fontWeight:900,color:T.text,letterSpacing:-1}}>Welcome to<br/><span style={{color:T.accent}}>TripShip</span></div>
       <div style={{color:T.textSub,fontSize:14,marginTop:10,marginBottom:32}}>Sign in to start splitting trips</div>
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        <div onClick={()=>sbSignInGoogle()} style={{padding:"14px 20px",background:T.surface,border:`1px solid ${T.border2}`,borderRadius:14,color:T.text,display:"flex",alignItems:"center",justifyContent:"center",gap:12,fontSize:15,fontWeight:600,cursor:"pointer"}}>
+        <div onClick={()=>onDone()} style={{padding:"14px 20px",background:T.surface,border:`1px solid ${T.border2}`,borderRadius:14,color:T.text,display:"flex",alignItems:"center",justifyContent:"center",gap:12,fontSize:15,fontWeight:600,cursor:"pointer"}}>
           <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
           Continue with Google
         </div>
@@ -391,7 +329,7 @@ function SignIn({onDone}){
 }
 
 /* ── Profile Setup ── */
-function ProfileSetup({onDone}){
+function ProfileSetup({onDone, joiningTrip}){
   const T=useT();
   const [name,setName]=useState(""); const [gender,setGender]=useState(""); const [city,setCity]=useState(""); const [email,setEmail]=useState("");
   const [photo,setPhoto]=useState(null); const [raw,setRaw]=useState(null); const [preview,setPreview]=useState(false); const [perr,setPerr]=useState(""); const [imgLoaded,setImgLoaded]=useState(false);
@@ -425,7 +363,7 @@ function ProfileSetup({onDone}){
         </div>
       )}
       <div style={{padding:"52px 24px 100px"}}>
-        <div style={{marginBottom:28}}><div style={{fontFamily:T.fontHead,fontSize:22,fontWeight:900,color:T.text,letterSpacing:-1}}>SET UP YOUR PROFILE</div><div style={{color:T.textSub,fontSize:14,marginTop:6}}>Tell your travel crew who you are 🌍</div></div>
+        <div style={{marginBottom:28}}><div style={{fontFamily:T.fontHead,fontSize:22,fontWeight:900,color:T.text,letterSpacing:-1}}>SET UP YOUR PROFILE</div><div style={{color:T.textSub,fontSize:14,marginTop:6}}>{joiningTrip?"Almost there! Set up your profile to join the trip 🎒":"Tell your travel crew who you are 🌍"}</div></div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:28}}>
           <div onClick={()=>fRef.current?.click()} style={{width:100,height:100,borderRadius:"50%",background:"#111",border:`2.5px solid ${photo?T.accent:perr?T.danger:T.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",overflow:"hidden",position:"relative"}}>
             {photo?<img src={photo} alt="dp" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>:<div style={{textAlign:"center"}}><div style={{fontSize:28}}>📷</div><div style={{fontSize:10,color:T.textMuted,fontWeight:600}}>UPLOAD</div></div>}
@@ -443,7 +381,7 @@ function ProfileSetup({onDone}){
         </div>
         <div style={{marginTop:28}}>
           {!ok&&<div style={{fontSize:12,color:T.textMuted,textAlign:"center",marginBottom:8}}>{!photo?"📷 Profile photo is required":"Fill all required fields"}</div>}
-          <YBtn disabled={!ok} onClick={()=>onDone({name:name.trim(),gender,city:city.trim(),email:email.trim(),photo})}>Get Started</YBtn>
+          <YBtn disabled={!ok} onClick={()=>onDone({name:name.trim(),gender,city:city.trim(),email:email.trim(),photo})}>{joiningTrip?"Join Trip 🎒":"Get Started"}</YBtn>
         </div>
       </div>
     </Scr>
@@ -472,52 +410,22 @@ function Home({user,trips,onCreate,onOpen,onUpdateUser,toggleTheme,dark}){
     let id="";
     if(u.includes("tripId=")){const qs=u.split("?")[1]||""; const m=qs.match(/tripId=([^&]+)/); if(m)id=m[1];}
     else if(/^[a-z0-9]{6,12}$/i.test(u)) id=u;
-    if(!id){setJErr("Invalid trip ID."); setJJoining(false); return;}
-    // Pehle localStorage check karo
+    if(!id){setJErr("Invalid trip link."); setJJoining(false); return;}
     const local=loadTrips().find(t=>t.id===id);
     if(local){setJJoining(false); onOpen(local); return;}
-    // Supabase mein dhundho
     try{
-      const tripData=await sbSelect("trips","id=eq."+id);
-      if(!tripData||!tripData.length){setJErr("No trip found."); setJJoining(false); return;}
-      const t=tripData[0];
-      const [mems,exps,itin,vault,notes,acts]=await Promise.all([
-        sbSelect("trip_members","trip_id=eq."+id),
-        sbSelect("expenses","trip_id=eq."+id+"&order=created_at.asc"),
-        sbSelect("itinerary","trip_id=eq."+id+"&order=created_at.asc"),
-        sbSelect("vault","trip_id=eq."+id+"&order=created_at.asc"),
-        sbSelect("notes","trip_id=eq."+id+"&order=created_at.desc"),
-        sbSelect("activity_log","trip_id=eq."+id+"&order=created_at.desc&limit=50"),
-      ]);
-      const memberPhotos={};
-      (mems||[]).forEach(m=>{if(m.photo_url)memberPhotos[m.display_name]=m.photo_url;});
-      const trip={
-        id:t.id,tripName:t.trip_name,destination:t.destination,
-        startDate:t.start_date,endDate:t.end_date,cover:t.cover,
-        coverPhoto:t.cover_photo_url||null,currency:t.currency||"INR",
-        friends:(mems||[]).map(m=>m.display_name),
-        memberPhotos,
-        expenses:(exps||[]).map(e=>({id:e.id,payer:e.payer,amount:Number(e.amount),desc:e.description,category:e.category,date:e.expense_date,splitAmong:e.split_among||[],receipt:e.receipt_url||null})),
-        itinerary:(itin||[]).map(i=>({id:i.id,date:i.item_date,time:i.item_time,title:i.title,desc:i.description,category:i.category,addedBy:i.added_by})),
-        vault:(vault||[]).map(v=>({id:v.id,name:v.name,category:v.category,content:v.content,file:v.file_url,fileName:v.file_name,addedBy:v.added_by})),
-        notes:(notes||[]).map(n=>({id:n.id,title:n.title,body:n.body,createdBy:n.created_by,createdAt:new Date(n.created_at).getTime()})),
-        activity:(acts||[]).map(a=>({id:a.id,msg:a.message,type:a.type,by:a.done_by,at:new Date(a.created_at).getTime()})),
-        trash:[],createdAt:new Date(t.created_at).getTime(),
-      };
-      // Add current user as member in Supabase
-      const sbU=await sbGetSession().catch(()=>null);
-      if(sbU && sbU.id){
-        const alreadyMember=(mems||[]).some(m=>m.display_name===user.name);
-        if(!alreadyMember){
-          await sbInsert("trip_members",{trip_id:id,user_id:sbU.id,display_name:user.name,photo_url:user.photo&&!user.photo.startsWith("data:")?user.photo:null}).catch(()=>{});
-          trip.friends=[...trip.friends,user.name];
-        }
+      const tripData=await fbGetTrip(id);
+      if(!tripData){setJErr("No trip found."); setJJoining(false); return;}
+      if(!tripData.friends.includes(user.name)){
+        tripData.friends=[...tripData.friends,user.name];
+        tripData.memberPhotos={...tripData.memberPhotos,[user.name]:user.photo||null};
+        tripData.activity=[{id:Date.now(),msg:`${user.name} joined the trip! 🎉`,type:"join",by:user.name,at:Date.now()},...(tripData.activity||[])].slice(0,50);
+        await fbUpdateTrip(id,tripData);
       }
-      // Save locally
       const all=loadTrips(); const idx=all.findIndex(x=>x.id===id);
-      if(idx>=0) all[idx]=trip; else all.push(trip);
+      if(idx>=0) all[idx]=tripData; else all.push(tripData);
       saveTrips(all); setTrips(all);
-      setJJoining(false); onOpen(trip);
+      setJJoining(false); onOpen(tripData);
     }catch(e){
       console.error("Join error:",e);
       setJErr("Could not join trip. Try again."); setJJoining(false);
@@ -627,27 +535,11 @@ function CreateTrip({user,onDone,onBack}){
   const create=async()=>{
     setCreating(true);
     const tripId=genId();
-    const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,coverPhoto:null,currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:{[user.name]:user.photo||null},createdAt:Date.now()};
-    // Upload cover photo if any
-    if(coverPhoto && coverPhoto.startsWith("data:")){
-      const url=await sbUpload("avatars","cover_"+tripId+".jpg",coverPhoto).catch(()=>null);
-      if(url) trip.coverPhoto=url;
-    } else if(coverPhoto){
-      trip.coverPhoto=coverPhoto;
-    }
-    // Save to Supabase — session ho ya na ho, save karo
-    try{
-      const sbU=await sbGetSession().catch(()=>null);
-      const userId=sbU?.id||null;
-      await sbInsert("trips",{id:tripId,trip_name:trip.tripName,destination:trip.destination,start_date:sd,end_date:ed,cover:cov,cover_photo_url:trip.coverPhoto,currency:curr,created_by:userId});
-      // Add all members in parallel
-      await Promise.all(friends.map(fname=>{
-        const photoUrl=fname===user.name?(user.photo&&!user.photo.startsWith("data:")?user.photo:null):null;
-        return sbInsert("trip_members",{trip_id:tripId,user_id:userId,display_name:fname,photo_url:photoUrl}).catch(()=>{});
-      }));
-      console.log("Trip saved to Supabase!");
-    }catch(e){ console.error("Trip create SB error:",e); }
+    const trip={id:tripId,tripName:tn.trim(),destination:dest.trim(),startDate:sd,endDate:ed,cover:cov,coverPhoto:coverPhoto||null,currency:curr,friends,expenses:[],itinerary:[],vault:[],notes:[],memberPhotos:{[user.name]:user.photo||null},activity:[],trash:[],createdAt:Date.now()};
+    // Save locally first
     const all=[...loadTrips(),trip]; saveTrips(all);
+    // Save to Firebase
+    try{ await fbSaveTrip(trip); }catch(e){ console.error("Firebase save error:",e); }
     setCreating(false);
     onDone(trip);
   };
@@ -756,12 +648,17 @@ function TripCreated({trip,onGo}){
         </div>
       </div>
       <div style={{width:"100%",background:T.surface2,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",textAlign:"left"}}>
-        <div style={{fontSize:12,color:T.textSub,marginBottom:4}}>TRIP ID</div>
-        <div style={{fontSize:16,fontWeight:700,color:T.accent,fontFamily:"monospace"}}>{trip.id}</div>
+        <div style={{fontSize:12,color:T.textSub,marginBottom:4}}>TRIP LINK</div>
+        <div style={{fontSize:11,fontWeight:700,color:T.accent,fontFamily:"monospace",wordBreak:"break-all"}}>{makeTripLink(trip.id)}</div>
       </div>
       <div style={{width:"100%",display:"flex",flexDirection:"column",gap:10}}>
-        <GBtn onClick={()=>{try{navigator.clipboard?.writeText(trip.id);}catch(e){} setCp(true); setTimeout(()=>setCp(false),2000);}} style={{background:cp?"#059669":"rgba(255,255,255,0.07)",color:cp?"#fff":"rgba(255,255,255,0.75)"}}>{cp?"✓ ID Copied!":"📋 Copy Trip ID"}</GBtn>
-        <YBtn onClick={onGo}>Let's Go →</YBtn>
+        <YBtn onClick={()=>{
+          const link=makeTripLink(trip.id);
+          if(navigator.share){ navigator.share({title:"Join "+trip.tripName+" on TripShip",url:link}).catch(()=>{ try{navigator.clipboard?.writeText(link);}catch(e){} setCp(true); setTimeout(()=>setCp(false),2500); }); }
+          else { try{navigator.clipboard?.writeText(link);}catch(e){} setCp(true); setTimeout(()=>setCp(false),2500); }
+        }}>{cp?"✓ Link Copied!":"🔗 Share Trip Link"}</YBtn>
+        <GBtn onClick={()=>{try{navigator.clipboard?.writeText(makeTripLink(trip.id));}catch(e){} setCp(true); setTimeout(()=>setCp(false),2500);}} style={{background:cp?"#059669":"rgba(255,255,255,0.07)",color:cp?"#fff":"rgba(255,255,255,0.75)"}}>{cp?"✓ Copied!":"📋 Copy Link"}</GBtn>
+        <YBtn onClick={onGo} style={{background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,color:"rgba(255,255,255,0.6)"}}>Let's Go →</YBtn>
       </div>
     </div></Scr>
   );
@@ -824,7 +721,7 @@ const VC=["🪪 ID","✈️ Flight","🚂 Train","🏨 Hotel","📋 Visa","🔑 
 const NC=["rgba(255,221,87,0.12)","rgba(99,102,241,0.12)","rgba(52,211,153,0.1)","rgba(248,113,113,0.1)","rgba(167,139,250,0.1)"];
 const NB=["rgba(255,221,87,0.3)","rgba(99,102,241,0.3)","rgba(52,211,153,0.25)","rgba(248,113,113,0.25)","rgba(167,139,250,0.25)"];
 
-function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromSB}){
+function Dashboard({trip:init,user,onBack,toggleTheme,dark}){
   const T=useT();
   const [trip,setTrip]=useState(init);
   const [tab,setTab]=useState("home"); const [ev,setEv]=useState("log"); const [inv,setInv]=useState(false); const [cp,setCp]=useState(false);
@@ -845,36 +742,13 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
   const [sne,setSne]=useState(false); const [nt,setNt]=useState(""); const [nb,setNb]=useState(""); const [enid,setEnid]=useState(null);
   const docR=useRef(null);
 
-  const upd=p=>{ const u={...trip,...p}; setTrip(u); const all=loadTrips(); const i=all.findIndex(t=>t.id===trip.id); if(i>=0)all[i]=u; else all.push(u); saveTrips(all); };
-  const syncToSB=async(type,data,tripId)=>{
-    try{
-      if(type==="expense_add") await sbInsert("expenses",{id:data.id,trip_id:tripId,payer:data.payer,amount:data.amount,description:data.desc,category:data.category,expense_date:data.date,split_among:data.splitAmong,receipt_url:data.receipt||null});
-      else if(type==="expense_edit") await sbUpdate("expenses",{payer:data.payer,amount:data.amount,description:data.desc,category:data.category,expense_date:data.date,split_among:data.splitAmong,receipt_url:data.receipt||null},"id=eq."+data.id);
-      else if(type==="expense_del") await sbDelete("expenses","id=eq."+data.id);
-      else if(type==="trash_add") await sbInsert("trash",{id:data.id,trip_id:tripId,expense_data:data,deleted_by:data.deletedBy,deleted_at:new Date(data.deletedAt).toISOString()});
-      else if(type==="trash_del") await sbDelete("trash","id=eq."+data.id);
-      else if(type==="itinerary_add") await sbInsert("itinerary",{id:data.id,trip_id:tripId,item_date:data.date,item_time:data.time,title:data.title,description:data.desc||"",category:data.category,added_by:data.addedBy});
-      else if(type==="itinerary_edit") await sbUpdate("itinerary",{item_date:data.date,item_time:data.time,title:data.title,description:data.desc||"",category:data.category},"id=eq."+data.id);
-      else if(type==="itinerary_del") await sbDelete("itinerary","id=eq."+data.id);
-      else if(type==="vault_add") await sbInsert("vault",{id:data.id,trip_id:tripId,name:data.name,category:data.category,content:data.content||"",file_url:data.file||null,file_name:data.fileName||null,added_by:data.addedBy});
-      else if(type==="vault_edit") await sbUpdate("vault",{name:data.name,category:data.category,content:data.content||"",file_url:data.file||null,file_name:data.fileName||null},"id=eq."+data.id);
-      else if(type==="vault_del") await sbDelete("vault","id=eq."+data.id);
-      else if(type==="note_add") await sbInsert("notes",{id:data.id,trip_id:tripId,title:data.title,body:data.body||"",created_by:data.createdBy});
-      else if(type==="note_edit") await sbUpdate("notes",{title:data.title,body:data.body||"",edited_at:new Date().toISOString()},"id=eq."+data.id);
-      else if(type==="note_del") await sbDelete("notes","id=eq."+data.id);
-      else if(type==="activity") await sbInsert("activity_log",{id:data.id,trip_id:tripId,message:data.msg,type:data.type,done_by:data.by});
-      else if(type==="trip_update") await sbUpdate("trips",{trip_name:data.tripName,destination:data.destination,start_date:data.startDate,end_date:data.endDate},"id=eq."+tripId);
-      else if(type==="trip_delete") await sbDelete("trips","id=eq."+tripId);
-    }catch(e){ console.error("SB sync error:",type,e); }
-  };
+  const upd=p=>{ const u={...trip,...p}; setTrip(u); const all=loadTrips(); const i=all.findIndex(t=>t.id===trip.id); if(i>=0)all[i]=u; else all.push(u); saveTrips(all); fbUpdateTrip(trip.id,u).catch(()=>{}); };
   const addAct=(msg,type="expense")=>{
     const act={id:Date.now(),msg,type,by:user.name,at:Date.now()};
     const all=loadTrips(); const i=all.findIndex(t=>t.id===trip.id);
-    if(i>=0){ all[i].activity=[act,...(all[i].activity||[])].slice(0,50); saveTrips(all); setTrip(all[i]); }
-    syncToSB("activity",act,trip.id);
+    if(i>=0){ all[i].activity=[act,...(all[i].activity||[])].slice(0,50); saveTrips(all); setTrip(all[i]); fbUpdateTrip(trip.id,all[i]).catch(()=>{}); }
   };
   const deleteTrip=()=>{
-    syncToSB("trip_delete",{},trip.id);
     const all=loadTrips().filter(t=>t.id!==trip.id);
     saveTrips(all);
     onBack();
@@ -883,7 +757,6 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
     if(!etName.trim()||!etDest.trim()||!etSd||!etEd) return;
     const updated={tripName:etName.trim(),destination:etDest.trim(),startDate:etSd,endDate:etEd};
     upd(updated);
-    syncToSB("trip_update",updated,trip.id);
     addAct(`${user.name} updated trip details`,"edit");
     setEditTrip(false); setTripMenu(false);
   };
@@ -991,29 +864,16 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
   };
   useEffect(()=>{ const now=Date.now(); const days14=14*24*60*60*1000; const tr=(trip.trash||[]); const clean=tr.filter(e=>now-e.deletedAt<days14); if(clean.length!==tr.length){const u={...trip,trash:clean};setTrip(u);const all=loadTrips();const i=all.findIndex(t=>t.id===trip.id);if(i>=0)all[i]=u;saveTrips(all);} },[]);
 
-  // Real-time sync
+  // Real-time Firebase sync
   useEffect(()=>{
-    const tables=["expenses","itinerary","vault","notes","activity_log","trash"];
-    const sockets=[];
-    tables.forEach(table=>{
-      try{
-        const ws=sbRealtime(table,trip.id,async(msg)=>{
-          // Reload full trip from Supabase on any change
-          if(loadTripsFromSB){
-            const sbU=await sbGetSession().catch(()=>null);
-            if(sbU){
-              const updated=await loadTripsFromSB(sbU.id).catch(()=>null);
-              if(updated){
-                const t=updated.find(x=>x.id===trip.id);
-                if(t){ setTrip(t); }
-              }
-            }
-          }
-        });
-        sockets.push(ws);
-      }catch(e){}
-    });
-    return()=>sockets.forEach(ws=>{ try{ws.close();}catch(e){} });
+    let unsub=null;
+    fbSubscribeTrip(trip.id,(data)=>{
+      setTrip(data);
+      const all=loadTrips(); const i=all.findIndex(t=>t.id===trip.id);
+      if(i>=0) all[i]=data; else all.push(data);
+      saveTrips(all);
+    }).then(fn=>{ unsub=fn; }).catch(()=>{});
+    return()=>{ if(unsub) unsub(); };
   },[trip.id]);
   const tsp=f=>setSp(prev=>prev.includes(f)?prev.filter(x=>x!==f):[...prev,f]);
   const saveE=()=>{
@@ -1022,12 +882,10 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
     if(eeid){
       const editedE={id:eeid,payer:py,amount:a,desc:ds.trim(),category:ec,date:ed2,splitAmong:sp.slice(),receipt:receipt||null};
       upd({expenses:exps.map(e=>e.id===eeid?{...e,...editedE}:e)});
-      syncToSB("expense_edit",editedE,trip.id);
       addAct(`${user.name} edited expense "${ds.trim()}" — ${fmtT(a)}`,"edit");
     } else {
       const newE={id:Date.now(),payer:py,amount:a,desc:ds.trim(),category:ec,date:ed2,splitAmong:sp.slice(),receipt:receipt||null};
       upd({expenses:[...exps,newE]});
-      syncToSB("expense_add",newE,trip.id);
       addAct(`${user.name} added expense "${ds.trim()}" — ${fmtT(a)}`,"expense");
     }
     setAm(""); setDs(""); setEeid(null); setReceipt(null); setSae(false);
@@ -1039,8 +897,6 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
     const e=exps.find(x=>x.id===id); if(!e)return;
     const trashE={...e,deletedAt:Date.now(),deletedBy:user.name};
     upd({expenses:exps.filter(x=>x.id!==id),trash:[...(trip.trash||[]),trashE]});
-    syncToSB("expense_del",e,trip.id);
-    syncToSB("trash_add",trashE,trip.id);
     addAct(`${user.name} deleted expense "${e.desc}" — ${fmtT(e.amount)}`,"delete");
   };
   const restoreE=id=>{
@@ -1070,12 +926,10 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
     if(eid){
       const editI={id:eid,date:id2,time:it,title:ii.trim(),desc:iD.trim(),category:ic};
       upd({itinerary:items.map(x=>x.id===eid?{...x,...editI}:x)});
-      syncToSB("itinerary_edit",editI,trip.id);
       addAct(`${user.name} edited itinerary item "${ii.trim()}"`,"itinerary");
     } else {
       const newI={id:Date.now(),date:id2,time:it,title:ii.trim(),desc:iD.trim(),category:ic,addedBy:user.name};
       upd({itinerary:[...items,newI]});
-      syncToSB("itinerary_add",newI,trip.id);
       addAct(`${user.name} added "${ii.trim()}" to itinerary`,"itinerary");
     }
     setSai(false);
@@ -1095,12 +949,10 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
     if(edid){
       const editD={id:edid,name:dn.trim(),category:dc,content:dco.trim(),file:df,fileName:dfn};
       upd({vault:docs.map(d=>d.id===edid?{...d,...editD,file:df||d.file,fileName:dfn||d.fileName}:d)});
-      syncToSB("vault_edit",editD,trip.id);
       addAct(`${user.name} updated document "${dn.trim()}"`,"vault");
     } else {
       const newD={id:Date.now(),name:dn.trim(),category:dc,content:dco.trim(),file:df,fileName:dfn,addedBy:user.name};
       upd({vault:[...docs,newD]});
-      syncToSB("vault_add",newD,trip.id);
       addAct(`${user.name} added document "${dn.trim()}" to vault`,"vault");
     }
     setSad(false);
@@ -1112,12 +964,10 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
     const notes=trip.notes||[];
     if(enid){
       upd({notes:notes.map(n=>n.id===enid?{...n,title,body:nb.trim(),editedAt:Date.now()}:n)});
-      syncToSB("note_edit",{id:enid,title,body:nb.trim()},trip.id);
       addAct(`${user.name} edited note "${title}"`,"note");
     } else {
       const newN={id:Date.now(),title,body:nb.trim(),createdBy:user.name,createdAt:Date.now()};
       upd({notes:[newN,...notes]});
-      syncToSB("note_add",newN,trip.id);
       addAct(`${user.name} added note "${title}"`,"note");
     }
     setSne(false);
@@ -1217,10 +1067,14 @@ function Dashboard({trip:init,user,onBack,toggleTheme,dark,sbUser,loadTripsFromS
       </div>}
 
       {inv&&<div style={{background:"rgba(255,221,87,0.08)",borderBottom:`1px solid rgba(255,221,87,0.2)`,padding:"10px 14px"}}>
-        <div style={{fontSize:11,fontWeight:700,color:T.accentText,marginBottom:6}}>Trip ID to share</div>
+        <div style={{fontSize:11,fontWeight:700,color:T.accentText,marginBottom:6}}>Share trip link with friends</div>
         <div style={{display:"flex",gap:8}}>
-          <div style={{flex:1,background:T.surface2,border:`1px solid ${T.border2}`,borderRadius:7,padding:"7px 10px",fontSize:13,fontFamily:"monospace",color:T.accentText,fontWeight:700}}>{trip.id}</div>
-          <button onClick={()=>{try{navigator.clipboard?.writeText(trip.id);}catch(e){} setCp(true); setTimeout(()=>setCp(false),2000);}} style={{padding:"7px 12px",background:cp?"#059669":T.accent,color:cp?"#fff":"#000",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer"}}>{cp?"✓":"Copy"}</button>
+          <div style={{flex:1,background:T.surface2,border:`1px solid ${T.border2}`,borderRadius:7,padding:"7px 10px",fontSize:11,fontFamily:"monospace",color:T.accentText,fontWeight:700,wordBreak:"break-all"}}>{makeTripLink(trip.id)}</div>
+          <button onClick={()=>{
+            const link=makeTripLink(trip.id);
+            if(navigator.share){ navigator.share({title:"Join "+trip.tripName,url:link}).catch(()=>{}); }
+            else { try{navigator.clipboard?.writeText(link);}catch(e){} setCp(true); setTimeout(()=>setCp(false),2500); }
+          }} style={{padding:"7px 12px",background:cp?"#059669":T.accent,color:cp?"#fff":"#000",border:"none",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>{cp?"✓ Copied":navigator.share?"Share":"Copy"}</button>
         </div>
       </div>}
 
@@ -1590,8 +1444,8 @@ function App(){
   const [cs,setCs]=useState(0);
   const [at,setAt]=useState(null);
   const [dark,setDark]=useState(()=>{ try{ return localStorage.getItem("ts_dark")!=="false"; }catch(e){ return true; } });
-  const [sbUser,setSbUser]=useState(null);
-  const [loading,setLoading]=useState(true);
+  const [loading,setLoading]=useState(false);
+  const [pendingTripId,setPendingTripId]=useState(null);
   const theme=getT(dark);
   const toggleTheme=()=>{ const nd=!dark; setDark(nd); try{ localStorage.setItem("ts_dark",String(nd)); }catch(e){} };
 
@@ -1628,121 +1482,90 @@ function App(){
   }, []);
 
   useEffect(()=>{
-    handleAuthCallback();
-    // Check if user is logged in via Supabase
-    sbGetSession().then(sbU=>{
-      if(sbU && sbU.id){
-        setSbUser(sbU);
-        const localUser=loadUser();
-        if(localUser?.name){
-          setUser(localUser);
-          loadTripsFromSB(sbU.id).then(t=>{ if(t&&t.length) setTrips(t); else setTrips(loadTrips()); });
-        }
-      } else {
-        const u=loadUser(); if(u?.name)setUser(u); setTrips(loadTrips());
-      }
-      setLoading(false);
-    }).catch(()=>{ const u=loadUser(); if(u?.name)setUser(u); setTrips(loadTrips()); setLoading(false); });
+    const localUser=loadUser();
+    if(localUser?.name){ setUser(localUser); setTrips(loadTrips()); }
+    setLoading(false);
   },[]);
 
-  const loadTripsFromSB=async(userId)=>{
-    try{
-      const members=await sbSelect("trip_members","user_id=eq."+userId+"&select=trip_id");
-      if(!members||!members.length) return [];
-      const ids=members.map(m=>m.trip_id).join(",");
-      const tripsData=await sbSelect("trips","id=in.("+ids+")&select=*");
-      if(!tripsData||!tripsData.length) return [];
-      // Load full trip data for each trip
-      const full=await Promise.all(tripsData.map(async t=>{
-        const [exps,itin,vault,notes,acts,mems,trash]=await Promise.all([
-          sbSelect("expenses","trip_id=eq."+t.id+"&order=created_at.asc"),
-          sbSelect("itinerary","trip_id=eq."+t.id+"&order=created_at.asc"),
-          sbSelect("vault","trip_id=eq."+t.id+"&order=created_at.asc"),
-          sbSelect("notes","trip_id=eq."+t.id+"&order=created_at.desc"),
-          sbSelect("activity_log","trip_id=eq."+t.id+"&order=created_at.desc&limit=50"),
-          sbSelect("trip_members","trip_id=eq."+t.id),
-          sbSelect("trash","trip_id=eq."+t.id),
-        ]);
-        const memberPhotos={};
-        (mems||[]).forEach(m=>{ if(m.photo_url) memberPhotos[m.display_name]=m.photo_url; });
-        return {
-          id:t.id, tripName:t.trip_name, destination:t.destination,
-          startDate:t.start_date, endDate:t.end_date, cover:t.cover,
-          coverPhoto:t.cover_photo_url||null, currency:t.currency||"INR",
-          friends:(mems||[]).map(m=>m.display_name),
-          memberPhotos,
-          expenses:(exps||[]).map(e=>({id:e.id,payer:e.payer,amount:Number(e.amount),desc:e.description,category:e.category,date:e.expense_date,splitAmong:e.split_among||[],receipt:e.receipt_url||null})),
-          itinerary:(itin||[]).map(i=>({id:i.id,date:i.item_date,time:i.item_time,title:i.title,desc:i.description,category:i.category,addedBy:i.added_by})),
-          vault:(vault||[]).map(v=>({id:v.id,name:v.name,category:v.category,content:v.content,file:v.file_url,fileName:v.file_name,addedBy:v.added_by})),
-          notes:(notes||[]).map(n=>({id:n.id,title:n.title,body:n.body,createdBy:n.created_by,createdAt:new Date(n.created_at).getTime(),editedAt:n.edited_at?new Date(n.edited_at).getTime():null})),
-          activity:(acts||[]).map(a=>({id:a.id,msg:a.message,type:a.type,by:a.done_by,at:new Date(a.created_at).getTime()})),
-          trash:(trash||[]).map(tr=>({...tr.expense_data,deletedAt:new Date(tr.deleted_at).getTime(),deletedBy:tr.deleted_by})),
-          createdAt:new Date(t.created_at).getTime(),
-        };
-      }));
-      saveTrips(full); // cache locally
-      return full;
-    }catch(e){ console.error("loadTripsFromSB error:",e); return []; }
-  };
   const go=t=>{ setAt(t); setScr("dash"); };
-  const splashDone=async()=>{
-    handleAuthCallback();
-    // Session check background mein — local data se turant load karo
-    const localUser=loadUser();
-    if(localUser?.name){
-      setUser(localUser);
-      setTrips(loadTrips());
-      setScr("home");
-    } else {
-      setScr("signin");
-    }
-    // Background mein Supabase sync
-    sbGetSession().then(async sbU=>{
-      if(!sbU || !sbU.id) return;
-      setSbUser(sbU);
-      if(!localUser?.name){ setScr("profile"); return; }
-      const sbTrips=await loadTripsFromSB(sbU.id).catch(()=>[]);
-      if(sbTrips.length) setTrips(sbTrips);
-    }).catch(()=>{});
-  };
-  const signIn=()=>setScr("profile");
-  const profile=async(d)=>{
-    // Seedha home pe jaao — Supabase background mein save hoga
-    setUser(d); saveUser(d); setScr("home");
-    // Background mein Supabase save karo
-    sbGetSession().then(async sbU=>{
-      if(!sbU || !sbU.id) return;
-      setSbUser(sbU);
-      let photoUrl=d.photo;
-      // Photo upload background mein
-      if(d.photo && d.photo.startsWith("data:")){
-        sbUpload("avatars","user_"+sbU.id+".jpg",d.photo).then(url=>{
-          if(url){ saveUser({...d,photo:url}); setUser(prev=>({...prev,photo:url})); photoUrl=url; }
-          sbUpsert("users",{id:sbU.id,name:d.name,gender:d.gender,city:d.city,email:d.email||sbU.email||"",photo_url:photoUrl}).catch(()=>{});
-        }).catch(()=>{
-          sbUpsert("users",{id:sbU.id,name:d.name,gender:d.gender,city:d.city,email:d.email||sbU.email||"",photo_url:null}).catch(()=>{});
-        });
-      } else {
-        sbUpsert("users",{id:sbU.id,name:d.name,gender:d.gender,city:d.city,email:d.email||sbU.email||"",photo_url:photoUrl||null}).catch(()=>{});
+
+  const joinTripById=async(tripId, currentUser)=>{
+    setLoading(true);
+    try{
+      // Local check first
+      const local=loadTrips().find(t=>t.id===tripId);
+      if(local){ go(local); setLoading(false); window.history.replaceState({},document.title,window.location.pathname); return; }
+      // Firebase se fetch
+      const tripData=await fbGetTrip(tripId);
+      if(!tripData){ alert("Trip not found!"); setScr("home"); setLoading(false); return; }
+      // Add user to trip friends if not already
+      const u=currentUser;
+      if(u && !tripData.friends.includes(u.name)){
+        tripData.friends=[...tripData.friends, u.name];
+        tripData.memberPhotos={...tripData.memberPhotos, [u.name]:u.photo||null};
+        tripData.activity=[{id:Date.now(),msg:`${u.name} joined the trip! 🎉`,type:"join",by:u.name,at:Date.now()},...(tripData.activity||[])].slice(0,50);
+        await fbUpdateTrip(tripId, tripData);
       }
-    }).catch(()=>{});
+      // Save locally
+      const all=loadTrips(); const idx=all.findIndex(t=>t.id===tripId);
+      if(idx>=0) all[idx]=tripData; else all.push(tripData);
+      saveTrips(all); setTrips(loadTrips());
+      go(tripData);
+      window.history.replaceState({},document.title,window.location.pathname);
+    }catch(e){ console.error("Join error:",e); alert("Could not join trip. Check connection."); setScr("home"); }
+    setLoading(false);
   };
+
+  const splashDone=async()=>{
+    const urlTripId=getTripIdFromUrl();
+    const localUser=loadUser();
+    if(urlTripId){
+      setPendingTripId(urlTripId);
+      if(localUser?.name){ setUser(localUser); setTrips(loadTrips()); await joinTripById(urlTripId, localUser); }
+      else { setScr("profile_join"); }
+    } else {
+      if(localUser?.name){ setUser(localUser); setTrips(loadTrips()); setScr("home"); }
+      else { setScr("signin"); }
+    }
+  };
+
+  const signIn=()=>setScr("profile");
+
+  const profile=async(d)=>{
+    setUser(d); saveUser(d);
+    if(pendingTripId){
+      setTrips(loadTrips()); setScr("home");
+      await joinTripById(pendingTripId, d);
+      setPendingTripId(null);
+    } else {
+      setTrips(loadTrips()); setScr("home");
+    }
+  };
+
   const openTrip=t=>{ const all=loadTrips(); go(all.find(x=>x.id===t.id)||t); };
   const tripCreated=t=>{ setAt(t); setCs(3); };
   const goToTrip=()=>{ setCs(0); go(at); };
   const backHome=()=>{ setAt(null); setTrips(loadTrips()); setScr("home"); };
   const updUser=u=>{ setUser(u); saveUser(u); };
 
+  if(loading) return(
+    <div style={{position:"fixed",inset:0,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      <div style={{fontSize:36}}>✈️</div>
+      <div style={{color:"rgba(255,255,255,0.5)",fontSize:14}}>Joining trip…</div>
+    </div>
+  );
+
   return(
     <ThemeCtx.Provider value={theme}>
       <div style={{background:theme.bg,minHeight:"100vh",transition:"background 0.3s"}}>
         {scr==="splash"&&<Splash onDone={splashDone}/>}
         {scr==="signin"&&<SignIn onDone={signIn}/>}
-        {scr==="profile"&&<ProfileSetup onDone={profile}/>}
+        {scr==="profile"&&<ProfileSetup onDone={profile} joiningTrip={false}/>}
+        {scr==="profile_join"&&<ProfileSetup onDone={profile} joiningTrip={true}/>}
         {scr==="home"&&user&&cs===0&&<Home user={user} trips={trips} onCreate={()=>setCs(1)} onOpen={openTrip} onUpdateUser={updUser} toggleTheme={toggleTheme} dark={dark}/>}
         {scr==="home"&&user&&cs===1&&<CreateTrip user={user} onDone={tripCreated} onBack={()=>setCs(0)}/>}
         {cs===3&&at&&<TripCreated trip={at} onGo={goToTrip}/>}
-        {scr==="dash"&&at&&user&&<Dashboard trip={at} user={user} onBack={backHome} toggleTheme={toggleTheme} dark={dark} sbUser={sbUser} loadTripsFromSB={loadTripsFromSB}/>}
+        {scr==="dash"&&at&&user&&<Dashboard trip={at} user={user} onBack={backHome} toggleTheme={toggleTheme} dark={dark}/>}
       </div>
     </ThemeCtx.Provider>
   );
